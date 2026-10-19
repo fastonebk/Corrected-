@@ -173,7 +173,7 @@ main {
 .model-status {
   font-size: 0.8rem;
   color: var(--ink-soft);
-  margin-top: 14px;
+  margin-top: 10px;
 }
 .model-status.is-ready::before { content: "● "; color: #4b8a5e; }
 .model-status.is-error::before { content: "● "; color: var(--danger); }
@@ -283,6 +283,13 @@ main {
   flex-direction: column;
   align-items: center;
   margin-bottom: 18px;
+  background-image:
+    linear-gradient(45deg, #2a3350 25%, transparent 25%),
+    linear-gradient(-45deg, #2a3350 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a3350 75%),
+    linear-gradient(-45deg, transparent 75%, #2a3350 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
 }
 
 .preview-canvas-wrap canvas {
@@ -316,6 +323,15 @@ main {
   background: var(--paper);
   font-size: 0.88rem;
   color: var(--ink);
+}
+.field input[type="color"] {
+  width: 100%;
+  height: 38px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  cursor: pointer;
 }
 .field-row { display: flex; align-items: center; justify-content: space-between; }
 .field-row label { margin-bottom: 0; }
@@ -353,6 +369,7 @@ main {
 .field-inline { margin-bottom: 0; }
 .field-inline label { font-size: 0.72rem; margin-bottom: 3px; }
 .field-inline select { padding: 7px 8px; font-size: 0.82rem; }
+.field-inline input[type="color"] { height: 32px; width: 48px; padding: 2px; }
 
 .add-more-btn {
   border: 1px solid var(--navy-900);

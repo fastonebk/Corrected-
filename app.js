@@ -1,4 +1,4 @@
-/* App wiring: screens, single-photo editor, bulk workflow. */
+/* App wiring: screens, single-photo editor, bulk workflow, background removal. */
 
 const els = {
   modeButtons: document.querySelectorAll(".mode-btn"),
@@ -8,6 +8,7 @@ const els = {
   fileInput: document.getElementById("file-input"),
   fileInputBulk: document.getElementById("file-input-bulk"),
   modelStatus: document.getElementById("model-status"),
+  segStatus: document.getElementById("seg-status"),
 
   screenUpload: document.getElementById("screen-upload"),
   screenSingle: document.getElementById("screen-single"),
@@ -15,8 +16,12 @@ const els = {
 
   cropperContainer: document.getElementById("cropper-container"),
   previewWrap: document.getElementById("preview-canvas-wrap"),
+  previewCaption: document.getElementById("preview-caption"),
   formatSelect: document.getElementById("format-select"),
   sharpenToggle: document.getElementById("sharpen-toggle"),
+  bgSelect: document.getElementById("bg-select"),
+  bgCustomField: document.getElementById("bg-custom-field"),
+  bgCustomColor: document.getElementById("bg-custom-color"),
   filenameInput: document.getElementById("filename-input"),
   singleDownload: document.getElementById("single-download"),
   singleBack: document.getElementById("single-back"),
@@ -25,6 +30,9 @@ const els = {
   bulkCount: document.getElementById("bulk-count"),
   bulkFormatSelect: document.getElementById("bulk-format-select"),
   bulkSharpenToggle: document.getElementById("bulk-sharpen-toggle"),
+  bulkBgSelect: document.getElementById("bulk-bg-select"),
+  bulkBgCustomField: document.getElementById("bulk-bg-custom-field"),
+  bulkBgCustomColor: document.getElementById("bulk-bg-custom-color"),
   bulkDownload: document.getElementById("bulk-download"),
   bulkBack: document.getElementById("bulk-back"),
 
@@ -38,11 +46,12 @@ const els = {
 
 let currentMode = "single";
 let single = null; // { file, img, naturalW, naturalH, cropper, box }
-let bulkItems = []; // [{ id, file, img, naturalW, naturalH, box, tileCanvas, tileEl }]
-let modalTarget = null; // bulk item currently being fine-tuned
+let bulkItems = []; // [{ id, file, img, naturalW, naturalH, box, tileEl }]
+let modalTarget = null;
 let modalCropper = null;
 let modalBoxDraft = null;
 let bulkIdCounter = 0;
+let singlePreviewToken = 0; // guards against out-of-order async preview renders
 
 /* ---------- Model loading ---------- */
 
@@ -50,11 +59,23 @@ const modelLoadPromise = loadFaceModels();
 modelLoadPromise.then((ok) => {
   els.modelStatus.classList.remove("is-loading");
   if (ok) {
-    els.modelStatus.textContent = "Face detection ready — crops auto-center on the face.";
+    els.modelStatus.textContent = "Face detection ready — crops auto-center on the eyes.";
     els.modelStatus.classList.add("is-ready");
   } else {
     els.modelStatus.textContent = "Face detection unavailable — frame photos manually with the crop box.";
     els.modelStatus.classList.add("is-error");
+  }
+});
+
+const segLoadPromise = loadSegmentationModel();
+segLoadPromise.then((ok) => {
+  els.segStatus.classList.remove("is-loading");
+  if (ok) {
+    els.segStatus.textContent = "Background removal ready.";
+    els.segStatus.classList.add("is-ready");
+  } else {
+    els.segStatus.textContent = "Background removal unavailable — photos will keep their original background.";
+    els.segStatus.classList.add("is-error");
   }
 });
 
@@ -64,6 +85,18 @@ function timeout(ms) {
 
 async function ensureModelsSettled() {
   await Promise.race([modelLoadPromise, timeout(6000)]);
+}
+
+async function ensureSegSettled() {
+  await Promise.race([segLoadPromise, timeout(8000)]);
+}
+
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
 }
 
 /* ---------- Mode toggle ---------- */
@@ -148,6 +181,30 @@ function loadImage(file) {
   });
 }
 
+/* ---------- Background mode helpers (shared by single + bulk) ---------- */
+
+function resolveBgMode(selectEl, customColorEl) {
+  const v = selectEl.value;
+  if (v === "custom") return customColorEl.value;
+  return v; // "none" | "transparent" | "#rrggbb"
+}
+
+els.bgSelect.addEventListener("change", () => {
+  els.bgCustomField.hidden = els.bgSelect.value !== "custom";
+  renderSinglePreview();
+});
+els.bgCustomColor.addEventListener("input", () => {
+  if (els.bgSelect.value === "custom") renderSinglePreview();
+});
+
+els.bulkBgSelect.addEventListener("change", () => {
+  els.bulkBgCustomField.hidden = els.bulkBgSelect.value !== "custom";
+  bulkItems.forEach(renderTile);
+});
+els.bulkBgCustomColor.addEventListener("input", () => {
+  if (els.bulkBgSelect.value === "custom") bulkItems.forEach(renderTile);
+});
+
 /* ================= SINGLE MODE ================= */
 
 async function openSingle(file) {
@@ -166,7 +223,7 @@ async function openSingle(file) {
   els.cropperContainer.innerHTML = "";
   const cropper = new Cropper(els.cropperContainer, img, naturalW, naturalH, ASPECT);
   cropper.setBoxNatural(box);
-  cropper.onChange = () => renderSinglePreview();
+  cropper.onChange = debouncedSinglePreview;
 
   single = { file, img, naturalW, naturalH, cropper, box };
 
@@ -176,14 +233,31 @@ async function openSingle(file) {
   renderSinglePreview();
 }
 
-function renderSinglePreview() {
+async function buildFinalCanvas(imgEl, box, { sharpen, bgMode }) {
+  const canvas = cropAndResize(imgEl, box, TARGET_W, TARGET_H);
+  if (sharpen) sharpenCanvas(canvas, 0.6);
+  if (bgMode && bgMode !== "none") {
+    await ensureSegSettled();
+    await applyBackground(canvas, bgMode);
+  }
+  return canvas;
+}
+
+async function renderSinglePreview() {
   if (!single) return;
+  const token = ++singlePreviewToken;
   const box = single.cropper.getBoxNatural();
-  const canvas = cropAndResize(single.img, box, TARGET_W, TARGET_H);
-  if (els.sharpenToggle.checked) sharpenCanvas(canvas, 0.6);
+  const bgMode = resolveBgMode(els.bgSelect, els.bgCustomColor);
+  const canvas = await buildFinalCanvas(single.img, box, {
+    sharpen: els.sharpenToggle.checked,
+    bgMode,
+  });
+  if (token !== singlePreviewToken) return; // a newer render started meanwhile
   els.previewWrap.innerHTML = "";
   els.previewWrap.appendChild(canvas);
 }
+
+const debouncedSinglePreview = debounce(renderSinglePreview, 300);
 
 els.sharpenToggle.addEventListener("change", renderSinglePreview);
 
@@ -198,8 +272,11 @@ els.singleDownload.addEventListener("click", async () => {
   els.singleDownload.textContent = "Preparing…";
   try {
     const box = single.cropper.getBoxNatural();
-    const canvas = cropAndResize(single.img, box, TARGET_W, TARGET_H);
-    if (els.sharpenToggle.checked) sharpenCanvas(canvas, 0.6);
+    const bgMode = resolveBgMode(els.bgSelect, els.bgCustomColor);
+    const canvas = await buildFinalCanvas(single.img, box, {
+      sharpen: els.sharpenToggle.checked,
+      bgMode,
+    });
     const mime = els.formatSelect.value;
     const blob = await canvasToBlobWithDpi(canvas, mime, DPI);
     const ext = mime === "image/png" ? "png" : "jpg";
@@ -255,6 +332,9 @@ async function openBulk(files) {
   }
   updateBulkCount();
 
+  // Process concurrently (a handful at a time, not all at once) so the grid
+  // fills in fast without loading every full-resolution photo into memory
+  // simultaneously on big batches.
   let done = 0;
   const total = entries.length;
   updateBulkProgress(done, total);
@@ -268,10 +348,9 @@ async function openBulk(files) {
       item.naturalH = img.naturalHeight;
       const face = await detectFace(img);
       item.box = autoCropBox(item.naturalW, item.naturalH, face);
-      renderTile(item);
-      
+      await renderTile(item);
       const statusEl = item.tileEl.querySelector(".bulk-tile-status");
-      statusEl.textContent = ""; // Status text cleared after processing
+      statusEl.textContent = face ? "Face detected" : "Manual crop";
     } catch (err) {
       item.tileEl.querySelector(".bulk-tile-status").textContent = "Couldn't read file";
     } finally {
@@ -283,6 +362,7 @@ async function openBulk(files) {
   updateBulkCount();
 }
 
+/** Runs `worker` over `items` with at most `concurrency` in flight at once. */
 async function asyncPool(concurrency, items, worker) {
   const executing = new Set();
   for (const item of items) {
@@ -301,10 +381,13 @@ function updateBulkProgress(done, total) {
   els.bulkCount.textContent = `Detecting faces… ${done}/${total}`;
 }
 
-function renderTile(item) {
+async function renderTile(item) {
   if (!item.img || !item.box) return;
-  const canvas = cropAndResize(item.img, item.box, TARGET_W, TARGET_H);
-  if (els.bulkSharpenToggle.checked) sharpenCanvas(canvas, 0.6);
+  const bgMode = resolveBgMode(els.bulkBgSelect, els.bulkBgCustomColor);
+  const canvas = await buildFinalCanvas(item.img, item.box, {
+    sharpen: els.bulkSharpenToggle.checked,
+    bgMode,
+  });
   const displayCanvas = item.tileEl.querySelector("canvas");
   const dctx = displayCanvas.getContext("2d");
   dctx.clearRect(0, 0, TARGET_W, TARGET_H);
@@ -338,27 +421,33 @@ els.bulkDownload.addEventListener("click", async () => {
   const ready = bulkItems.filter((i) => i.img && i.box);
   if (!ready.length) return;
   els.bulkDownload.disabled = true;
-  els.bulkDownload.textContent = "Zipping…";
   try {
     const zip = new JSZip();
     const mime = els.bulkFormatSelect.value;
     const ext = mime === "image/png" ? "png" : "jpg";
+    const bgMode = resolveBgMode(els.bulkBgSelect, els.bulkBgCustomColor);
     const usedNames = new Set();
+    let n = 0;
 
     for (const item of ready) {
-      const canvas = cropAndResize(item.img, item.box, TARGET_W, TARGET_H);
-      if (els.bulkSharpenToggle.checked) sharpenCanvas(canvas, 0.6);
+      n++;
+      els.bulkDownload.textContent = `Processing ${n}/${ready.length}…`;
+      const canvas = await buildFinalCanvas(item.img, item.box, {
+        sharpen: els.bulkSharpenToggle.checked,
+        bgMode,
+      });
       const blob = await canvasToBlobWithDpi(canvas, mime, DPI);
       let base = item.file.name.replace(/\.[^/.]+$/, "") || "photo";
       let name = base + "." + ext;
-      let n = 1;
+      let dupe = 1;
       while (usedNames.has(name)) {
-        name = `${base}-${++n}.${ext}`;
+        name = `${base}-${++dupe}.${ext}`;
       }
       usedNames.add(name);
       zip.file(name, blob);
     }
 
+    els.bulkDownload.textContent = "Zipping…";
     const zipBlob = await zip.generateAsync({ type: "blob" });
     downloadBlob(zipBlob, "id-photos.zip");
   } finally {
@@ -379,20 +468,25 @@ function openFineTune(id) {
   modalCropper = new Cropper(els.modalCropperContainer, item.img, item.naturalW, item.naturalH, ASPECT);
   modalCropper.setBoxNatural(item.box);
   modalBoxDraft = { ...item.box };
-  modalCropper.onChange = (box) => {
-    modalBoxDraft = box;
-    renderModalPreview();
-  };
+  modalCropper.onChange = debouncedModalPreview;
   renderModalPreview();
 }
 
-function renderModalPreview() {
+async function renderModalPreview() {
   if (!modalTarget || !modalBoxDraft) return;
-  const canvas = cropAndResize(modalTarget.img, modalBoxDraft, TARGET_W, TARGET_H);
-  if (els.bulkSharpenToggle.checked) sharpenCanvas(canvas, 0.6);
+  const bgMode = resolveBgMode(els.bulkBgSelect, els.bulkBgCustomColor);
+  const canvas = await buildFinalCanvas(modalTarget.img, modalBoxDraft, {
+    sharpen: els.bulkSharpenToggle.checked,
+    bgMode,
+  });
   els.modalPreviewWrap.innerHTML = "";
   els.modalPreviewWrap.appendChild(canvas);
 }
+
+const debouncedModalPreview = debounce((box) => {
+  modalBoxDraft = box;
+  renderModalPreview();
+}, 300);
 
 els.modalReset.addEventListener("click", async () => {
   if (!modalTarget) return;
@@ -420,7 +514,7 @@ els.modalDone.addEventListener("click", () => {
     modalTarget.box = modalBoxDraft;
     renderTile(modalTarget);
     const statusEl = modalTarget.tileEl.querySelector(".bulk-tile-status");
-    statusEl.textContent = ""; // Status text cleared after processing
+    statusEl.textContent = "Adjusted manually";
   }
   closeModal();
 });

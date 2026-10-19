@@ -132,7 +132,6 @@ class Cropper {
         // Corner resize: fix the opposite corner, resize by the dominant delta,
         // derive the other dimension from the locked aspect ratio.
         let newW = start.box.w;
-        let newH = start.box.h;
         let anchorX, anchorY;
 
         if (mode === "se") {
@@ -154,7 +153,7 @@ class Cropper {
         }
 
         newW = Math.max(30, newW);
-        newH = newW / this.aspect;
+        const newH = newW / this.aspect;
 
         if (mode === "se") {
           box = { x: anchorX, y: anchorY, w: newW, h: newH };

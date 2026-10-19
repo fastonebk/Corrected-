@@ -27,7 +27,7 @@
   <section id="screen-upload" class="screen">
     <div class="intro">
       <h1>Crop ID photos, batch or one at a time.</h1>
-      <p>Drop in a photo. We find the face, frame it the way an ID photo should be framed, and export it at exactly 300 × 378&nbsp;px — 1&nbsp;inch by 1.26&nbsp;inch at 300&nbsp;DPI. Nudge the frame yourself if the auto-crop isn't quite right.</p>
+      <p>Drop in a photo. We find the face, frame it the way an ID photo should be framed, and export it at exactly 300 × 378&nbsp;px — 1&nbsp;inch by 1.26&nbsp;inch at 300&nbsp;DPI. Optionally swap the background for a flat color too.</p>
     </div>
 
     <div class="mode-toggle" role="tablist" aria-label="Upload mode">
@@ -48,6 +48,7 @@
     </label>
     <input type="file" id="file-input" accept="image/png, image/jpeg, image/webp" hidden>
     <p id="model-status" class="model-status">Loading face-detection model…</p>
+    <p id="seg-status" class="model-status">Loading background-removal model…</p>
   </section>
 
   <!-- ============ SINGLE EDITOR SCREEN ============ -->
@@ -62,7 +63,7 @@
         <h2>Output</h2>
         <div class="preview-card">
           <div id="preview-canvas-wrap" class="preview-canvas-wrap"></div>
-          <p class="preview-caption">300 × 378 px</p>
+          <p class="preview-caption" id="preview-caption">300 × 378 px</p>
         </div>
 
         <div class="field">
@@ -79,12 +80,27 @@
         </div>
 
         <div class="field">
+          <label for="bg-select">Background</label>
+          <select id="bg-select">
+            <option value="none">Keep original</option>
+            <option value="transparent">Remove — transparent</option>
+            <option value="#ffffff">Remove — white</option>
+            <option value="#1a3a6b">Remove — blue</option>
+            <option value="custom">Remove — custom color…</option>
+          </select>
+        </div>
+        <div class="field" id="bg-custom-field" hidden>
+          <label for="bg-custom-color">Custom color</label>
+          <input type="color" id="bg-custom-color" value="#1a3a6b">
+        </div>
+
+        <div class="field">
           <label for="filename-input">File name</label>
           <input type="text" id="filename-input" value="id-photo">
         </div>
 
         <button id="single-download" class="primary-btn">Download photo</button>
-        <p class="panel-note">Resolution metadata is embedded so the file reports 300 DPI in any image viewer.</p>
+        <p class="panel-note">Resolution metadata is embedded so the file reports 300 DPI in any image viewer. Background removal runs locally in your browser — nothing is uploaded anywhere.</p>
       </aside>
     </div>
   </section>
@@ -109,6 +125,20 @@
         <div class="field field-row field-inline">
           <label for="bulk-sharpen-toggle">Sharpen</label>
           <input type="checkbox" id="bulk-sharpen-toggle" checked>
+        </div>
+        <div class="field field-inline">
+          <label for="bulk-bg-select">Background</label>
+          <select id="bulk-bg-select">
+            <option value="none">Keep original</option>
+            <option value="transparent">Transparent</option>
+            <option value="#ffffff">White</option>
+            <option value="#1a3a6b">Blue</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div class="field field-inline" id="bulk-bg-custom-field" hidden>
+          <label for="bulk-bg-custom-color">Color</label>
+          <input type="color" id="bulk-bg-custom-color" value="#1a3a6b">
         </div>
         <label class="add-more-btn" for="file-input-bulk">+ Add more</label>
         <input type="file" id="file-input-bulk" accept="image/png, image/jpeg, image/webp" multiple hidden>
@@ -147,13 +177,15 @@
 </div>
 
 <footer class="site-footer">
-  <p>Runs entirely in your browser — no photo is uploaded to a server. Face detection via face-api.js (loaded from a CDN); everything else is plain canvas.</p>
+  <p>Runs entirely in your browser — no photo is uploaded to a server. Face detection and background removal via CDN-hosted models; everything else is plain canvas.</p>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/selfie_segmentation.js" crossorigin="anonymous"></script>
 <script src="cropper.js"></script>
 <script src="imaging.js"></script>
+<script src="segmentation.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
